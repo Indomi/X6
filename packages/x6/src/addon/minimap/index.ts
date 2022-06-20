@@ -2,6 +2,7 @@ import { FunctionExt } from '../../util'
 import { View } from '../../view/view'
 import { Graph } from '../../graph/graph'
 import { EventArgs } from '../../graph/events'
+import { Point, Rectangle } from '../../geometry'
 
 namespace ClassName {
   export const root = 'widget-minimap'
@@ -131,6 +132,19 @@ export class MiniMap extends View {
       this.sourceGraph.on('translate', this.onTransform, this)
       this.sourceGraph.on('scale', this.onTransform, this)
       this.sourceGraph.on('model:updated', this.onModelUpdated, this)
+
+      setTimeout(() => {
+        this.sourceGraph.once(
+          'translate',
+          () => {
+            this.targetGraph.centerPoint(
+              this.sourceGraph.getGraphArea().center.x,
+              this.sourceGraph.getGraphArea().center.y,
+            )
+          },
+          this,
+        )
+      });
     }
     this.sourceGraph.on('resize', this.updatePaper, this)
     this.delegateEvents({
@@ -160,13 +174,22 @@ export class MiniMap extends View {
   }
 
   protected onTransform(options: { ui: boolean }) {
+    if (
+      !this.targetGraph
+        .getGraphArea()
+        .containsRect(this.getCellsAndViewportBBox())
+    ) {
+      this.zoomTargetGraph()
+    }
+
     if (options.ui || this.targetGraphTransforming) {
+      // this.zoomTargetGraph()
       this.updateViewport()
     }
   }
 
   protected onModelUpdated() {
-    this.targetGraph.zoomToFit()
+    this.zoomTargetGraph()
   }
 
   protected updatePaper(width: number, height: number): this
@@ -204,11 +227,46 @@ export class MiniMap extends View {
     if (this.scroller) {
       this.targetGraph.scale(ratio, ratio)
     } else {
-      this.targetGraph.zoomToFit()
+      this.zoomTargetGraph()
     }
 
     this.updateViewport()
     return this
+  }
+
+  public zoomTargetGraph() {
+    const bbox = this.getCellsAndViewportBBox()
+    this.targetGraph.zoomToRect(bbox)
+
+    const srcBbox = this.sourceGraph.getGraphArea()
+    const tgtBbox = this.targetGraph.getGraphArea()
+    this.ratio = Math.min(srcBbox.width / tgtBbox.width, srcBbox.width / bbox.width)
+  }
+
+  private getCellsAndViewportBBox() {
+    const gArea = this.sourceGraph.getGraphArea()
+    const gBbox =
+      this.sourceGraph.getAllCellsBBox() ||
+      new Rectangle(Infinity, Infinity, 0, 0)
+
+    const topLeft = new Point(
+      Math.min(gArea.x, gBbox.x),
+      Math.min(gArea.y, gBbox.y),
+    )
+
+    const bottomRight = new Point(
+      Math.max(gArea.bottomRight.x, gBbox.bottomRight.x),
+      Math.max(gArea.bottomRight.y, gBbox.bottomRight.y),
+    )
+
+    const newBbox = new Rectangle(
+      topLeft.x,
+      topLeft.y,
+      bottomRight.x - topLeft.x,
+      bottomRight.y - topLeft.y,
+    )
+
+    return newBbox
   }
 
   protected updateViewport() {
@@ -329,9 +387,14 @@ export class MiniMap extends View {
       y = e.offsetY
     }
 
-    const cx = (x - ts.tx) / this.ratio
-    const cy = (y - ts.ty) / this.ratio
-    this.sourceGraph.centerPoint(cx, cy)
+    if (this.scroller) {
+      const cx = (x - ts.tx) / this.ratio
+      const cy = (y - ts.ty) / this.ratio
+      this.sourceGraph.centerPoint(cx, cy)
+    } else {
+      const pt = this.targetGraph.graphToLocal({ x, y })
+      this.sourceGraph.centerPoint(pt.x, pt.y)
+    }
   }
 
   @View.dispose()
